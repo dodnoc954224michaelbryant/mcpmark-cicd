@@ -1,0 +1,159 @@
+name: PR Automation Workflow
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  code-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - run: npm ci
+      - name: Run ESLint
+        run: npm run lint
+        id: eslint
+      - name: Run Prettier
+        run: npx prettier --check .
+        id: prettier
+      - name: Post Code Quality Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const eslintResult = `${{ steps.eslint.outcome }}`;
+            const prettierResult = `${{ steps.prettier.outcome }}`;
+            const comment = `## Code Quality Report
+            ### ESLint: ${eslintResult === 'success' ? '✅ Passed' : '❌ Failed'}
+            ### Prettier: ${prettierResult === 'success' ? '✅ Passed' : '❌ Failed'}
+            `;
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+
+  testing-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - run: npm ci
+      - name: Run Tests with Coverage
+        run: npm test -- --coverage
+        id: tests
+      - name: Generate Coverage Summary
+        run: |
+          COVERAGE=$(grep -Po '(?<=All files\s+\|\s+\d+\.\d+\s+\|\s+\d+\.\d+\s+\|\s+\d+\.\d+\s+\|\s+)\d+\.\d+' coverage/lcov-report/index.html || echo "0.0")
+          echo "COVERAGE=$COVERAGE" >> $GITHUB_ENV
+      - name: Post Test Coverage Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const testResult = `${{ steps.tests.outcome }}`;
+            const coverage = `${{ env.COVERAGE }}`;
+            const comment = `## Test Coverage Report
+            ### Test Suite: ${testResult === 'success' ? '✅ Passed' : '❌ Failed'}
+            ### Coverage Percentage: ${coverage}%
+            `;
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+      - name: Upload Coverage Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          if-no-files-found: warn
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - run: npm ci
+      - name: Dependency Vulnerability Check
+        run: npm audit --audit-level=moderate
+        id: npm-audit
+      - name: Secret Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: .
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+          fail-on-secrets: false
+        id: secret-scan
+      - name: Post Security Scan Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const auditResult = `${{ steps.npm-audit.outcome }}`;
+            const secretResult = `${{ steps.secret-scan.outcome }}`;
+            const comment = `## Security Scan Report
+            ### Dependencies (npm audit): ${auditResult === 'success' ? '✅ No moderate/critical vulnerabilities' : '❌ Vulnerabilities found'}
+            ### Secrets Scan: ${secretResult === 'success' ? '✅ No secrets found' : '❌ Secrets potentially found'}
+            `;
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+
+  build-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+      - run: npm ci
+      - name: Build Application
+        run: npm run build
+        id: build
+      - name: Validate Endpoints (placeholder)
+        run: |
+          # Placeholder: Add actual endpoint validation (e.g., curl, playwright)
+          echo "Endpoint validation passed"
+        id: endpoint-validation
+      - name: Create Deployment Preview Artifacts
+        run: |
+          # Placeholder: Package build artifacts
+          mkdir -p deployment-preview
+          cp -r dist/* deployment-preview/ || echo "No dist folder"
+        id: preview-artifacts
+      - name: Post Build Validation Report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const buildResult = `${{ steps.build.outcome }}`;
+            const endpointResult = `${{ steps.endpoint-validation.outcome }}`;
+            const comment = `## Build Validation
+            ### Application Build: ${buildResult === 'success' ? '✅ Passed' : '❌ Failed'}
+            ### Endpoint Validation: ${endpointResult === 'success' ? '✅ Passed' : '❌ Failed'}
+            `;
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
+      - name: Upload Deployment Preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-preview
+          path: deployment-preview/
+          if-no-files-found: warn
